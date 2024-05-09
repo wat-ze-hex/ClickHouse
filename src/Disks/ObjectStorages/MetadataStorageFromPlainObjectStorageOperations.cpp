@@ -159,10 +159,13 @@ void MetadataStorageFromPlainObjectStorageRemoveDirectoryOperation::execute(std:
     if (path_it == path_map.end())
         return;
 
-    LOG_TRACE(getLogger("MetadataStorageFromPlainObjectStorageRemoveDirectoryOperation"), "Removing directory '{}'", path);
-
     key_prefix = path_it->second;
     auto object_key = ObjectStorageKey::createAsRelative(key_prefix, PREFIX_PATH_FILE_NAME);
+    LOG_TRACE(
+        getLogger("MetadataStorageFromPlainObjectStorageRemoveDirectoryOperation"),
+        "Removing directory '{}' with prefix.path '{}'",
+        path,
+        object_key.serialize());
     auto object = StoredObject(object_key.serialize(), path / PREFIX_PATH_FILE_NAME);
     object_storage->removeObject(object);
     path_map.erase(path_it);
