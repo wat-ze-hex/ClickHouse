@@ -1,6 +1,10 @@
 #include <Disks/ObjectStorages/MetadataStorageFromPlainRewritableObjectStorage.h>
 
 #include <IO/ReadHelpers.h>
+#if USE_AWS_S3
+#include <IO/S3/getObjectInfo.h>
+#include <IO/S3Common.h>
+#endif
 #include <Common/ErrorCodes.h>
 #include <Common/logger_useful.h>
 #include "CommonPathPrefixKeyGenerator.h"
@@ -30,11 +34,36 @@ MetadataStorageFromPlainObjectStorage::PathMap loadPathPrefixMap(const std::stri
         if (remote_path.filename() != PREFIX_PATH_FILE_NAME)
             continue;
 
-        StoredObject object{file.relative_path};
-
-        auto read_buf = object_storage->readObject(object);
         String local_path;
-        readStringUntilEOF(local_path, *read_buf);
+        try
+        {
+            StoredObject object{file.relative_path, /* local_path */ "", file.metadata.size_bytes};
+            auto read_buf = object_storage->readObjects({std::move(object)});
+
+            readStringUntilEOF(local_path, *read_buf);
+        }
+#if USE_AWS_S3
+        catch (const S3Exception & e)
+        {
+            if (S3::isNotFoundError(e.getS3ErrorCode()))
+            {
+                LOG_DEBUG(
+                    getLogger("MetadataStorageFromPlainObjectStorage"),
+                    "S3 key not found, ignoring. "
+                    "This may happen if the endpoint is shared between several disks, and another disk has deleted the key; "
+                    "key: '{}', message: '{}'",
+                    file.relative_path,
+                    e.what());
+                continue;
+            }
+            throw;
+        }
+#endif
+        catch (const Exception &)
+        {
+            // TODO: Process no such key error for other storages.
+            throw;
+        }
 
         chassert(remote_path.has_parent_path());
         auto res = result.emplace(local_path, remote_path.parent_path());
