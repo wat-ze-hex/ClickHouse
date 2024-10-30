@@ -220,6 +220,7 @@ void ProgressTable::writeTable(WriteBufferFromFileDescriptor & message, bool sho
     message << HIDE_CURSOR;
     message << "\n";
     writeWithWidth(message, COLUMN_EVENT_NAME, column_event_name_width);
+    writeWithWidth(message, COLUMN_HOST_NAME, COLUMN_HOST_NAME_WIDTH);
     writeWithWidth(message, COLUMN_VALUE, COLUMN_VALUE_WIDTH);
     writeWithWidth(message, COLUMN_PROGRESS, COLUMN_PROGRESS_WIDTH);
     auto col_doc_width = getColumnDocumentationWidth(terminal_width);
@@ -231,46 +232,50 @@ void ProgressTable::writeTable(WriteBufferFromFileDescriptor & message, bool sho
 
     for (auto & [name, per_host_info] : metrics)
     {
-        message << "\n";
-        if (per_host_info.isStale(elapsed_sec))
-            message << setColorForStaleMetrics();
-        writeWithWidth(message, name, column_event_name_width);
-
-        auto value = per_host_info.getSummaryValue();
-        auto value_type = getValueType(event_name_to_event.at(name));
-        writeWithWidth(message, formatReadableValue(value_type, value), COLUMN_VALUE_WIDTH);
-
-        /// Get the maximum progress before it is updated in getSummaryProgress.
-        auto max_progress = per_host_info.getMaxProgress();
-        auto progress = per_host_info.getSummaryProgress(elapsed_sec);
-        switch (value_type)
+        for (auto & [host_name, metric] : per_host_info.host_to_metric)
         {
-            case ProfileEvents::ValueType::Number:
-                message << setColorForProgress(progress, max_progress);
-                break;
-            case ProfileEvents::ValueType::Bytes:
-                message << setColorForBytesBasedMetricsProgress(progress);
-                break;
-            case ProfileEvents::ValueType::Milliseconds:
-                [[fallthrough]];
-            case ProfileEvents::ValueType::Microseconds:
-                [[fallthrough]];
-            case ProfileEvents::ValueType::Nanoseconds:
-                message << setColorForTimeBasedMetricsProgress(value_type, progress);
-                break;
+            message << "\n";
+            if (per_host_info.isStale(elapsed_sec))
+                message << setColorForStaleMetrics();
+            writeWithWidth(message, name, column_event_name_width);
+
+            writeWithWidth(message, host_name, COLUMN_HOST_NAME_WIDTH);
+            auto value = per_host_info.getSummaryValue(host_name);
+            auto value_type = getValueType(event_name_to_event.at(name));
+            writeWithWidth(message, formatReadableValue(value_type, value), COLUMN_VALUE_WIDTH);
+
+            /// Get the maximum progress before it is updated in getSummaryProgress.
+            auto max_progress = per_host_info.getMaxProgress();
+            auto progress = per_host_info.getSummaryProgress(elapsed_sec, host_name);
+            switch (value_type)
+            {
+                case ProfileEvents::ValueType::Number:
+                    message << setColorForProgress(progress, max_progress);
+                    break;
+                case ProfileEvents::ValueType::Bytes:
+                    message << setColorForBytesBasedMetricsProgress(progress);
+                    break;
+                case ProfileEvents::ValueType::Milliseconds:
+                    [[fallthrough]];
+                case ProfileEvents::ValueType::Microseconds:
+                    [[fallthrough]];
+                case ProfileEvents::ValueType::Nanoseconds:
+                    message << setColorForTimeBasedMetricsProgress(value_type, progress);
+                    break;
+            }
+
+            writeWithWidth(message, formatReadableValue(value_type, progress) + "/s", COLUMN_PROGRESS_WIDTH);
+
+            if (col_doc_width)
+            {
+                message << setColorForDocumentation();
+                const auto * doc = getDocumentation(event_name_to_event.at(name));
+                writeWithWidthStrict(message, doc, col_doc_width);
+            }
+
+            message << RESET_COLOR;
+            message << CLEAR_TO_END_OF_LINE;
         }
-
-        writeWithWidth(message, formatReadableValue(value_type, progress) + "/s", COLUMN_PROGRESS_WIDTH);
-
-        if (col_doc_width)
-        {
-            message << setColorForDocumentation();
-            const auto * doc = getDocumentation(event_name_to_event.at(name));
-            writeWithWidthStrict(message, doc, col_doc_width);
-        }
-
-        message << RESET_COLOR;
-        message << CLEAR_TO_END_OF_LINE;
     }
 
     message << moveUpNLines(tableSize());
@@ -377,12 +382,17 @@ void ProgressTable::resetTable()
 size_t ProgressTable::tableSize() const
 {
     /// Number of lines + header.
-    return metrics.empty() ? 0 : metrics.size() + 1;
+    size_t size = 0;
+    for (auto & [host_name, metric] : metrics)
+    {
+        size += metric.host_to_metric.size();
+    }
+    return size == 0 ? 0 : size + 1;
 }
 
 size_t ProgressTable::getColumnDocumentationWidth(size_t terminal_width) const
 {
-    auto fixed_columns_width = column_event_name_width + COLUMN_VALUE_WIDTH + COLUMN_PROGRESS_WIDTH;
+    auto fixed_columns_width = column_event_name_width + COLUMN_VALUE_WIDTH + COLUMN_PROGRESS_WIDTH + COLUMN_HOST_NAME_WIDTH;
     if (terminal_width < fixed_columns_width + COLUMN_DOCUMENTATION_MIN_WIDTH)
         return 0;
     return terminal_width - fixed_columns_width;
@@ -459,6 +469,11 @@ double ProgressTable::MetricInfoPerHost::getSummaryValue()
         });
 }
 
+double ProgressTable::MetricInfoPerHost::getSummaryValue(const std::string & host)
+{
+    return host_to_metric.find(host)->second.getValue();
+}
+
 double ProgressTable::MetricInfoPerHost::getSummaryProgress(double time_now)
 {
     auto progress = std::accumulate(
@@ -470,6 +485,13 @@ double ProgressTable::MetricInfoPerHost::getSummaryProgress(double time_now)
             const MetricInfo & info = host_data.second;
             return acc + info.calculateProgress(time_now);
         });
+    max_progress = std::max(max_progress, progress);
+    return progress;
+}
+
+double ProgressTable::MetricInfoPerHost::getSummaryProgress(double time_now, const std::string & host)
+{
+    auto progress = host_to_metric.find(host)->second.calculateProgress(time_now);
     max_progress = std::max(max_progress, progress);
     return progress;
 }

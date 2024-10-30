@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/StringRef.h"
 #include <Interpreters/ProfileEventsExt.h>
 #include <base/types.h>
 #include <Common/ProfileEvents.h>
@@ -77,12 +78,14 @@ private:
 
         void updateHostValue(const HostName & host, ProfileEvents::Type type, Int64 new_value, double new_time);
         double getSummaryValue();
+        double getSummaryValue(const std::string & host);
         double getSummaryProgress(double time_now);
+        double getSummaryProgress(double time_now, const std::string & host);
         double getMaxProgress() const;
         bool isStale(double now) const;
 
-    private:
         std::unordered_map<HostName, MetricInfo> host_to_metric;
+    private:
         double max_progress = 0;
     };
 
@@ -106,10 +109,12 @@ private:
     size_t column_event_name_width = 20;
 
     static constexpr std::string_view COLUMN_EVENT_NAME = "Event name";
+    static constexpr std::string_view COLUMN_HOST_NAME = "Host name";
     static constexpr std::string_view COLUMN_VALUE = "Value";
     static constexpr std::string_view COLUMN_PROGRESS = "Progress";
     static constexpr std::string_view COLUMN_DOCUMENTATION_NAME = "Documentation";
     static constexpr size_t COLUMN_VALUE_WIDTH = 20;
+    static constexpr size_t COLUMN_HOST_NAME_WIDTH = 50;
     static constexpr size_t COLUMN_PROGRESS_WIDTH = 20;
     static constexpr size_t COLUMN_DOCUMENTATION_MIN_WIDTH = COLUMN_DOCUMENTATION_NAME.size();
 
